@@ -75,7 +75,7 @@
     "name": "Wrap",
     "base_size_m": 1.0,
     "minimum_surface_size_m": 0.001,
-    "car_target_size_m": 0.00390625,
+    "car_target_size_m": 0.002,
     "refine_volume_size_m": 0.03,
     "refine_margin_m": 0.2,
     "nth_largest": 1,
@@ -84,7 +84,55 @@
     "proximity_refinement": true,
     "gap_closure": false,
     "run_global_if_local_fails": true,
-    "stl_binary": true
+    "stl_binary": true,
+    "wall_target_size_m": 1.0,
+    "ground_growth": [
+      {
+        "size_m": 0.002,
+        "outer_expand_from_plinth_m": 0.02
+      },
+      {
+        "size_m": 0.004,
+        "outer_expand_from_plinth_m": 0.05
+      },
+      {
+        "size_m": 0.008,
+        "outer_expand_from_plinth_m": 0.1
+      },
+      {
+        "size_m": 0.016,
+        "outer_expand_from_plinth_m": 0.2
+      },
+      {
+        "size_m": 0.032,
+        "outer_expand_from_plinth_m": 0.35
+      },
+      {
+        "size_m": 0.064,
+        "outer_expand_from_plinth_m": 0.65
+      },
+      {
+        "size_m": 0.128,
+        "outer_expand_from_plinth_m": 1.35
+      },
+      {
+        "size_m": 0.256,
+        "outer_expand_from_plinth_m": 2.7
+      },
+      {
+        "size_m": 0.512,
+        "outer_expand_from_plinth_m": 5.35
+      },
+      {
+        "size_m": 1.0,
+        "outer_expand_from_plinth_m": null
+      }
+    ],
+    "contact_prevention": {
+      "enabled": true,
+      "floor_m": 1e-05,
+      "plinth_pattern": "*Plinth*"
+    }
   },
   "label": {
     "smooth_rounds": 3,

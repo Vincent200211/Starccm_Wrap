@@ -12,7 +12,9 @@
 - 创建随车体 bbox 自动外扩的 refinement box
 - STAR Surface Wrapper
 - “第 N 个最大内部体积”，默认 `N=1`
-- 车体表面 4 mm、远场 1 m、车体 refinement volume 30 mm 的变尺寸控制
+- 车体/plinth 表面 2 mm、风洞五壁 1 m、车体 refinement volume 30 mm
+- 地面按 plinth 向外分成 2/4/8/16/32/64/128/256/512/1000 mm 多级环带
+- plinth 与全部地面环带设置两组防接触
 - 曲率加密、接近值加密、局部失败自动回退
 - 导出二进制 STL
 - 按最近参考面重新打标为 14 个车体 patch
@@ -120,7 +122,7 @@ output/
    ├─ parts/                  # 已变换的车体 part 参考 STL
    ├─ markers/                # Porous/Fan marker STL
    ├─ references/             # 按 patch 合并的参考 STL
-   ├─ domain_box.stl
+   ├─ domain_faces/           # 五个 1 m 风洞壁 + 地面分级 STL
    └─ car_refine_box.stl
 ```
 

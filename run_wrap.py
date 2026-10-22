@@ -27,7 +27,8 @@ from typing import Iterable, Sequence
 
 import numpy as np
 
-from lib.stl_io import bbox, merge_binary_stls, read_binary_stl, write_box_stl
+from lib.stl_io import (bbox, merge_binary_stls, read_binary_stl, write_box_faces,
+                        write_box_stl, write_ground_bands)
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG = ROOT / "config" / "wrap_config.json"
@@ -282,7 +283,7 @@ def main() -> int:
     prepared_sim = work_dir / "prepared.sim"
     wrap_sim = work_dir / "wrapped.sim"
     wrap_stl = work_dir / "wrapped.stl"
-    domain_box_stl = work_dir / "domain_box.stl"
+    domain_faces_dir = work_dir / "domain_faces"
     refine_box_stl = work_dir / "car_refine_box.stl"
     parts_index = work_dir / "parts_index.tsv"
     markers_index = work_dir / "markers_index.tsv"
@@ -334,15 +335,27 @@ def main() -> int:
         margin = float(config["wrap"]["refine_margin_m"])
         refine_box = box_from_margin(lo, hi, margin)
         domain_box = [float(v) for v in config["domain"]["box_m"]]
-        write_box_stl(domain_box_stl, domain_box, "DomainBox")
         write_box_stl(refine_box_stl, refine_box, "CarRefineBox")
+        wall_files = write_box_faces(domain_faces_dir, domain_box)
+
+        plinth_path = ref_dir / "Tyre_Plinths.stl"
+        if not plinth_path.is_file():
+            raise FileNotFoundError(f"Plinth reference STL missing: {plinth_path}")
+        plinth_lo, plinth_hi = bbox([read_binary_stl(plinth_path)])
+        ground_bands = write_ground_bands(
+            domain_faces_dir, domain_box, plinth_lo, plinth_hi,
+            config["wrap"]["ground_growth"],
+        )
         build_report = {
             "machine": machine,
             "car_files": [str(p) for p in car_files],
             "marker_files": [str(p) for p in marker_files],
             "car_bbox_m": [lo.tolist(), hi.tolist()],
+            "plinth_bbox_m": [plinth_lo.tolist(), plinth_hi.tolist()],
             "domain_box_m": domain_box,
             "refine_box_m": refine_box,
+            "wall_parts": {k: str(v) for k, v in wall_files.items()},
+            "ground_bands": ground_bands,
             "references": ref_report,
         }
         (logs_dir / "build_report.json").write_text(
@@ -354,12 +367,20 @@ def main() -> int:
             "prepared_sim": prepared_sim,
             "wrap_sim": wrap_sim,
             "wrap_stl": wrap_stl,
-            "domain_box_stl": domain_box_stl,
             "refine_box_stl": refine_box_stl,
             "wrap_name": config["wrap"]["name"],
             "base_size_m": float(config["wrap"]["base_size_m"]),
             "minimum_surface_size_m": float(config["wrap"]["minimum_surface_size_m"]),
             "car_target_size_m": float(config["wrap"]["car_target_size_m"]),
+            "wall_target_size_m": float(config["wrap"]["wall_target_size_m"]),
+            "wall_names": "|".join(wall_files.keys()),
+            "wall_files": "|".join(str(p) for p in wall_files.values()),
+            "ground_names": "|".join(b["name"] for b in ground_bands),
+            "ground_files": "|".join(b["path"] for b in ground_bands),
+            "ground_sizes_m": "|".join(str(b["size_m"]) for b in ground_bands),
+            "contact_prevention_enabled": bool(config["wrap"]["contact_prevention"]["enabled"]),
+            "contact_floor_m": float(config["wrap"]["contact_prevention"]["floor_m"]),
+            "contact_prevention_plinth_pattern": str(config["wrap"]["contact_prevention"]["plinth_pattern"]),
             "refine_volume_size_m": float(config["wrap"]["refine_volume_size_m"]),
             "nth_largest": int(config["wrap"]["nth_largest"]),
             "smallest_relevant_volume_m3": float(config["wrap"]["smallest_relevant_volume_m3"]),
