@@ -1,0 +1,15 @@
+# Local run products
+output/
+work/
+*.sim
+*.stl
+*.obj
+*.ansa
+*.dbs
+*.log
+*.tmp
+
+# Python
+__pycache__/
+*.pyc
+.venv/

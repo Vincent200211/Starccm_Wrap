@@ -1,0 +1,181 @@
+{
+  "_comment": "DP18 STAR-CCM+ 无 GUI 包面工作流。长度单位统一为 m。",
+  "star": {
+    "home": "D:\\Program Files\\Siemens\\17.04.008\\STAR-CCM+17.04.008",
+    "np": 4,
+    "tessellation_density": 1,
+    "sharp_edge_angle_deg": 30.0
+  },
+  "paths": {
+    "geometry_dir": "../ANSA_WRAP_CFMESH/geometry",
+    "setup_txt": "../ANSA_WRAP_CFMESH/preProcessor/setup.txt",
+    "output_dir": "output"
+  },
+  "car": {
+    "files": [
+      "*CH*.stp",
+      "*Diffuser*.stp",
+      "*FW*.stp",
+      "*Radiator_Ducts*.stp",
+      "*RW*.stp",
+      "*Susps*.stp",
+      "*T_Tray*.stp",
+      "*UT*.stp",
+      "*Winglets*.stp",
+      "*Uprights*.stp",
+      "*Wheels*.stp"
+    ]
+  },
+  "markers": [
+    {
+      "name": "Porous_Battery",
+      "pattern": "*Porous_Battery*.stp"
+    },
+    {
+      "name": "Porous_Radiators",
+      "pattern": "*Porous_Radiators*.stp"
+    },
+    {
+      "name": "Fan_Battery",
+      "pattern": "*Fan_Battery*.stp"
+    },
+    {
+      "name": "Fan_Radiators",
+      "pattern": "*Fan_Radiators*.stp"
+    }
+  ],
+  "machine": {
+    "enabled": true,
+    "xpitch_m": 1.53,
+    "wheel_radius_m": 0.203,
+    "cad_ref_ride_height_m": 0.035,
+    "pitch_sign": 1.0,
+    "yaw_sign": 1.0,
+    "yaw_pivot_m": [
+      0.0,
+      0.0
+    ],
+    "fixed_to_ground": [
+      "*Wheels*",
+      "*Plinth*",
+      "*Uprights*"
+    ]
+  },
+  "domain": {
+    "box_m": [
+      -35.0,
+      65.0,
+      -50.0,
+      50.0,
+      0.0,
+      50.0
+    ]
+  },
+  "wrap": {
+    "name": "Wrap",
+    "base_size_m": 1.0,
+    "minimum_surface_size_m": 0.001,
+    "car_target_size_m": 0.00390625,
+    "refine_volume_size_m": 0.03,
+    "refine_margin_m": 0.2,
+    "nth_largest": 1,
+    "smallest_relevant_volume_m3": 1e-09,
+    "curvature_refinement": true,
+    "proximity_refinement": true,
+    "gap_closure": false,
+    "run_global_if_local_fails": true,
+    "stl_binary": true
+  },
+  "label": {
+    "smooth_rounds": 3,
+    "far_m": 0.01,
+    "wheels_split_x_m": 0.765,
+    "domain_tolerance_mm": 2.0,
+    "reference_rules": [
+      {
+        "patch": "FW",
+        "sources": [
+          "*FW*.stp"
+        ]
+      },
+      {
+        "patch": "RW",
+        "sources": [
+          "*RW*.stp"
+        ],
+        "exclude": [
+          "*UPPER*"
+        ]
+      },
+      {
+        "patch": "RW_Upper",
+        "sources": [
+          "*RW*.stp"
+        ],
+        "include": [
+          "*UPPER*"
+        ]
+      },
+      {
+        "patch": "Monocoque",
+        "sources": [
+          "*CH*.stp"
+        ]
+      },
+      {
+        "patch": "Winglets",
+        "sources": [
+          "*Winglets*.stp"
+        ]
+      },
+      {
+        "patch": "Diffuser",
+        "sources": [
+          "*Diffuser*.stp"
+        ]
+      },
+      {
+        "patch": "T_Tray",
+        "sources": [
+          "*T_Tray*.stp"
+        ]
+      },
+      {
+        "patch": "Radiator_Ducts",
+        "sources": [
+          "*Radiator_Ducts*.stp"
+        ]
+      },
+      {
+        "patch": "Susps",
+        "sources": [
+          "*Susps*.stp"
+        ]
+      },
+      {
+        "patch": "Uprights",
+        "sources": [
+          "*Uprights*.stp"
+        ]
+      },
+      {
+        "patch": "UT",
+        "sources": [
+          "*UT*.stp"
+        ]
+      },
+      {
+        "patch": "Tyre_Plinths",
+        "sources": [
+          "*Plinth*.stp"
+        ]
+      },
+      {
+        "patch": "Wheels",
+        "sources": [
+          "*Wheels*.stp"
+        ]
+      }
+    ]
+  }
+}
