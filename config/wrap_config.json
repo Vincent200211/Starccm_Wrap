@@ -88,7 +88,7 @@
     "wall_target_size_m": 1.0,
     "ground_growth": [],
     "contact_prevention": {
-      "enabled": false,
+      "enabled": true,
       "floor_m": 1e-05,
       "plinth_pattern": "*Plinth*"
     },

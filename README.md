@@ -153,7 +153,7 @@ DP_Wheels_Rear
 
 ```text
 run_wrap.py
-  ├─ 生成 stage properties / 外场 box / refinement box
+  ├─ 生成 stage properties / 外场 box / 单一地面
   ├─ 调用 STAR PrepareGeometry.java
   ├─ 合并 patch reference STL
   ├─ 调用 STAR RunWrapper.java
@@ -194,7 +194,7 @@ STAR 与 ANSA 的包面算法不是同一个实现，因此不能假设三角形
 5. `label_wall.json` 中最近参考面距离和模糊带比例合理；
 6. 最终 OBJ 能通过 CFMesh `checkMesh`。
 
-当前版本已完成几何变换与最大内部体积包面验证；接触防接触当前关闭。
+当前版本已完成几何变换与最大内部体积包面验证。关闭 contact prevention 时可完整生成包面、SIM 和打标 OBJ；启用 contact prevention 时存在下方记录的 STAR 2206 原生内存崩溃。
 
 ## 已修复：STAR 2206 装配层级变换
 
@@ -225,3 +225,56 @@ Rz(180°) + Tx(+1.53 m)
 已验证变换后主要 patch 的 bbox 与
 `../ANSA_WRAP_CFMESH/geometry/from_ansa/reference` 对照在约 0–5 mm 内；
 当前 `W42 - Wheels.stp` 已更新，其轮组 bbox 与旧 ANSA 参考约差 9 mm。
+
+
+## 已知问题：contact prevention 触发 STAR 2206 bad allocation
+
+当前配置已启用 plinth 与单一 `DomainGround` 之间的接触防接触：
+
+```json
+"contact_prevention": {
+  "enabled": true,
+  "floor_m": 1e-05,
+  "plinth_pattern": "*Plinth*"
+}
+```
+
+复现条件：
+
+```text
+STAR-CCM+ 2206.0001
+MPI ranks:            4
+Ground:               单一 DomainGround，无 ground band
+Volume of interest:   LARGEST_INTERNAL
+Contact prevention:   4 个 plinth surfaces <-> 1 个 ground surface
+Contact floor:        1e-5 m
+Mesh in parallel:     true
+```
+
+包面执行到以下阶段时崩溃：
+
+```text
+Generating Octree Mesh
+   Performing contact prevention:
+Error: bad allocation
+```
+
+`bad allocation` 是首个真实错误；后续的 `Connection reset`、`NullPointerException`
+和 `WRAPPER FAILURE` 是 STAR 服务器进程退出后的连锁错误。
+
+已排除：
+
+1. 不是 ground band 分块导致：改为单一 `DomainGround` 后仍复现；
+2. 不是体积选择导致：改为 `LARGEST_INTERNAL` 后车体可正常继承，但 contact prevention 仍崩溃；
+3. 不是进程数导致：`np=4`、`mesh_in_parallel=false` 均在同一位置失败；
+4. 不是 Java 接触对象类型导致：已改为显式 `PartSurface` 集合并仍复现。
+
+在关闭 contact prevention 时，`LARGEST_INTERNAL` 包面已验证成功：65 个车体
+part 和 6 个风洞边界均被继承，最终约 2136 万三角形，`wrapped.sim` 可正常保存。
+
+后续建议按单变量顺序测试：
+
+1. 将 `floor_m` 从 `1e-5` 提高到 `1e-4`；
+2. 若仍失败，提高到 `1e-3`；
+3. 单独降低 plinth 局部尺寸或关闭 proximity refinement；
+4. 如仍失败，视为 STAR 2206 contact prevention 路径问题，改用其他接触控制方案。
