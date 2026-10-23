@@ -13,3 +13,6 @@ work/
 __pycache__/
 *.pyc
 .venv/
+
+# Local geometry source
+geometry/*.stp

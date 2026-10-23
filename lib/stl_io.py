@@ -152,6 +152,19 @@ def write_box_faces(directory: str | Path, box: Sequence[float]) -> dict[str, Pa
     return files
 
 
+def write_ground_plane(directory: str | Path, domain_box: Sequence[float],
+                       name: str = "DomainGround") -> dict:
+    """Write one planar ground patch covering the full wind-tunnel floor."""
+    if len(domain_box) != 6:
+        raise ValueError("domain_box must contain six values")
+    xmin, xmax, ymin, ymax, zmin, _ = map(float, domain_box)
+    out_dir = Path(directory)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{name}.stl"
+    write_quad_stl(path, [(xmin, xmax, ymin, ymax)], zmin, -1.0, name)
+    return {"name": name, "path": str(path)}
+
+
 def write_ground_bands(directory: str | Path, domain_box: Sequence[float],
                        plinth_lo: Sequence[float], plinth_hi: Sequence[float],
                        bands: Sequence[dict]) -> list[dict]:

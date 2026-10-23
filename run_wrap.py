@@ -28,7 +28,7 @@ from typing import Iterable, Sequence
 import numpy as np
 
 from lib.stl_io import (bbox, merge_binary_stls, read_binary_stl, write_box_faces,
-                        write_box_stl, write_ground_bands)
+                        write_ground_bands, write_ground_plane)
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG = ROOT / "config" / "wrap_config.json"
@@ -107,6 +107,8 @@ def machine_parameters(config: dict) -> dict[str, float | bool | list]:
         "yaw_pivot_y": float(pivot[1]),
         "pitch_sign": float(m.get("pitch_sign", 1.0)),
         "yaw_sign": float(m.get("yaw_sign", 1.0)),
+        "apply_pitch": bool(m.get("apply_pitch", True)),
+        "apply_dz": bool(m.get("apply_dz", True)),
         "fixed_patterns": list(m.get("fixed_to_ground", [])),
     }
 
@@ -224,14 +226,6 @@ def car_bounds(rows: list[dict[str, str]]) -> tuple[np.ndarray, np.ndarray]:
     return bbox(read_binary_stl(row["stl"]) for row in rows)
 
 
-def box_from_margin(lo: np.ndarray, hi: np.ndarray, margin: float) -> list[float]:
-    return [
-        float(lo[0] - margin), float(hi[0] + margin),
-        float(lo[1] - margin), float(hi[1] + margin),
-        float(lo[2] - margin), float(hi[2] + margin),
-    ]
-
-
 def write_stage_params(path: Path, values: dict[str, object]) -> None:
     write_properties(path, values)
 
@@ -284,7 +278,6 @@ def main() -> int:
     wrap_sim = work_dir / "wrapped.sim"
     wrap_stl = work_dir / "wrapped.stl"
     domain_faces_dir = work_dir / "domain_faces"
-    refine_box_stl = work_dir / "car_refine_box.stl"
     parts_index = work_dir / "parts_index.tsv"
     markers_index = work_dir / "markers_index.tsv"
 
@@ -310,6 +303,8 @@ def main() -> int:
         "machine_yaw_pivot_y": float(machine["yaw_pivot_y"]),
         "machine_pitch_sign": float(machine["pitch_sign"]),
         "machine_yaw_sign": float(machine["yaw_sign"]),
+        "machine_apply_pitch": bool(machine.get("apply_pitch", True)),
+        "machine_apply_dz": bool(machine.get("apply_dz", True)),
         "fixed_patterns": "|".join(machine.get("fixed_patterns", [])),
     })
 
@@ -332,20 +327,28 @@ def main() -> int:
         rows = load_part_index(parts_index)
         ref_report = build_references(config, rows, ref_dir)
         lo, hi = car_bounds(rows)
-        margin = float(config["wrap"]["refine_margin_m"])
-        refine_box = box_from_margin(lo, hi, margin)
         domain_box = [float(v) for v in config["domain"]["box_m"]]
-        write_box_stl(refine_box_stl, refine_box, "CarRefineBox")
+        if domain_faces_dir.exists():
+            for stale in domain_faces_dir.glob("*.stl"):
+                stale.unlink()
         wall_files = write_box_faces(domain_faces_dir, domain_box)
 
         plinth_path = ref_dir / "Tyre_Plinths.stl"
         if not plinth_path.is_file():
             raise FileNotFoundError(f"Plinth reference STL missing: {plinth_path}")
         plinth_lo, plinth_hi = bbox([read_binary_stl(plinth_path)])
-        ground_bands = write_ground_bands(
-            domain_faces_dir, domain_box, plinth_lo, plinth_hi,
-            config["wrap"]["ground_growth"],
-        )
+        growth = config["wrap"].get("ground_growth", [])
+        if growth:
+            ground_bands = write_ground_bands(
+                domain_faces_dir, domain_box, plinth_lo, plinth_hi, growth,
+            )
+        else:
+            ground_plane = write_ground_plane(domain_faces_dir, domain_box)
+            ground_bands = [{
+                **ground_plane,
+                "size_m": float(config["wrap"]["wall_target_size_m"]),
+                "outer": [domain_box[0], domain_box[1], domain_box[2], domain_box[3]],
+            }]
         build_report = {
             "machine": machine,
             "car_files": [str(p) for p in car_files],
@@ -353,7 +356,6 @@ def main() -> int:
             "car_bbox_m": [lo.tolist(), hi.tolist()],
             "plinth_bbox_m": [plinth_lo.tolist(), plinth_hi.tolist()],
             "domain_box_m": domain_box,
-            "refine_box_m": refine_box,
             "wall_parts": {k: str(v) for k, v in wall_files.items()},
             "ground_bands": ground_bands,
             "references": ref_report,
@@ -367,7 +369,6 @@ def main() -> int:
             "prepared_sim": prepared_sim,
             "wrap_sim": wrap_sim,
             "wrap_stl": wrap_stl,
-            "refine_box_stl": refine_box_stl,
             "wrap_name": config["wrap"]["name"],
             "base_size_m": float(config["wrap"]["base_size_m"]),
             "minimum_surface_size_m": float(config["wrap"]["minimum_surface_size_m"]),
@@ -381,13 +382,12 @@ def main() -> int:
             "contact_prevention_enabled": bool(config["wrap"]["contact_prevention"]["enabled"]),
             "contact_floor_m": float(config["wrap"]["contact_prevention"]["floor_m"]),
             "contact_prevention_plinth_pattern": str(config["wrap"]["contact_prevention"]["plinth_pattern"]),
-            "refine_volume_size_m": float(config["wrap"]["refine_volume_size_m"]),
-            "nth_largest": int(config["wrap"]["nth_largest"]),
             "smallest_relevant_volume_m3": float(config["wrap"]["smallest_relevant_volume_m3"]),
             "curvature_refinement": bool(config["wrap"]["curvature_refinement"]),
             "proximity_refinement": bool(config["wrap"]["proximity_refinement"]),
             "gap_closure": bool(config["wrap"]["gap_closure"]),
             "run_global_if_local_fails": bool(config["wrap"]["run_global_if_local_fails"]),
+            "mesh_in_parallel": bool(config["wrap"].get("mesh_in_parallel", True)),
             "stl_binary": bool(config["wrap"].get("stl_binary", True)),
         })
         env = os.environ.copy()

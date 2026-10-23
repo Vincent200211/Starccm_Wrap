@@ -5,7 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from lib.stl_io import (bbox, merge_binary_stls, read_binary_stl, write_box_faces,
-                        write_box_stl, write_ground_bands)
+                        write_box_stl, write_ground_bands, write_ground_plane)
 
 
 class StlIoTests(unittest.TestCase):
@@ -29,6 +29,15 @@ class StlIoTests(unittest.TestCase):
             self.assertEqual(merge_binary_stls([a, b], out), 24)
             self.assertEqual(read_binary_stl(out).shape, (24, 3, 3))
 
+
+    def test_single_ground_plane(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            box = [-5.0, 5.0, -4.0, 4.0, 0.0, 3.0]
+            ground = write_ground_plane(Path(tmp), box)
+            tri = read_binary_stl(ground["path"])
+            lo, hi = bbox([tri])
+            np.testing.assert_allclose(lo, [-5.0, -4.0, 0.0])
+            np.testing.assert_allclose(hi, [5.0, 4.0, 0.0])
 
     def test_domain_faces_and_ground_partition(self):
         with tempfile.TemporaryDirectory() as tmp:

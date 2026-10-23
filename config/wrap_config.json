@@ -7,7 +7,7 @@
     "sharp_edge_angle_deg": 30.0
   },
   "paths": {
-    "geometry_dir": "../ANSA_WRAP_CFMESH/geometry",
+    "geometry_dir": "geometry",
     "setup_txt": "../ANSA_WRAP_CFMESH/preProcessor/setup.txt",
     "output_dir": "output"
   },
@@ -23,6 +23,7 @@
       "*UT*.stp",
       "*Winglets*.stp",
       "*Uprights*.stp",
+      "*Plinth*.stp",
       "*Wheels*.stp"
     ]
   },
@@ -59,7 +60,9 @@
       "*Wheels*",
       "*Plinth*",
       "*Uprights*"
-    ]
+    ],
+    "apply_pitch": true,
+    "apply_dz": true
   },
   "domain": {
     "box_m": [
@@ -76,9 +79,6 @@
     "base_size_m": 1.0,
     "minimum_surface_size_m": 0.001,
     "car_target_size_m": 0.002,
-    "refine_volume_size_m": 0.03,
-    "refine_margin_m": 0.2,
-    "nth_largest": 1,
     "smallest_relevant_volume_m3": 1e-09,
     "curvature_refinement": true,
     "proximity_refinement": true,
@@ -86,53 +86,13 @@
     "run_global_if_local_fails": true,
     "stl_binary": true,
     "wall_target_size_m": 1.0,
-    "ground_growth": [
-      {
-        "size_m": 0.002,
-        "outer_expand_from_plinth_m": 0.02
-      },
-      {
-        "size_m": 0.004,
-        "outer_expand_from_plinth_m": 0.05
-      },
-      {
-        "size_m": 0.008,
-        "outer_expand_from_plinth_m": 0.1
-      },
-      {
-        "size_m": 0.016,
-        "outer_expand_from_plinth_m": 0.2
-      },
-      {
-        "size_m": 0.032,
-        "outer_expand_from_plinth_m": 0.35
-      },
-      {
-        "size_m": 0.064,
-        "outer_expand_from_plinth_m": 0.65
-      },
-      {
-        "size_m": 0.128,
-        "outer_expand_from_plinth_m": 1.35
-      },
-      {
-        "size_m": 0.256,
-        "outer_expand_from_plinth_m": 2.7
-      },
-      {
-        "size_m": 0.512,
-        "outer_expand_from_plinth_m": 5.35
-      },
-      {
-        "size_m": 1.0,
-        "outer_expand_from_plinth_m": null
-      }
-    ],
+    "ground_growth": [],
     "contact_prevention": {
-      "enabled": true,
+      "enabled": false,
       "floor_m": 1e-05,
       "plinth_pattern": "*Plinth*"
-    }
+    },
+    "mesh_in_parallel": true
   },
   "label": {
     "smooth_rounds": 3,

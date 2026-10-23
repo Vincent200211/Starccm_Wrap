@@ -6,11 +6,14 @@ import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.Properties;
 import java.util.regex.Pattern;
 
 import star.common.GeometryPart;
+import star.common.PartSurface;
 import star.common.Simulation;
 import star.meshing.BaseSize;
 import star.meshing.CustomMeshControlManager;
@@ -18,10 +21,10 @@ import star.meshing.MeshOperationManager;
 import star.meshing.MeshPart;
 import star.meshing.PartImportManager;
 import star.meshing.PartsMinimumSurfaceSize;
-import star.meshing.PartsTargetSurfaceSize;
 import star.meshing.SurfaceCustomMeshControl;
-import star.meshing.VolumeControlSize;
-import star.meshing.VolumeCustomMeshControl;
+import star.meshing.PartsTargetSurfaceSize;
+import star.meshing.PartsTargetSurfaceSizeOption;
+import star.meshing.PartsMinimumSurfaceSizeOption;
 import star.surfacewrapper.GlobalVolumeOfInterest;
 import star.surfacewrapper.GlobalVolumeOfInterestOption;
 import star.surfacewrapper.PartsTwoGroupContactPreventionSet;
@@ -112,14 +115,57 @@ public class RunWrapper extends StarMacro {
         return out;
     }
 
+
+    private static Set<Long> partIds(Simulation sim) {
+        Set<Long> ids = new HashSet<Long>();
+        for (GeometryPart part : sim.getGeometryPartManager().getLeafParts()) {
+            ids.add(part.getObjectId());
+        }
+        return ids;
+    }
+
+    private static GeometryPart importStlNamed(PartImportManager importer, Simulation sim,
+                                               String file, String name,
+                                               star.common.Units metre) {
+        Set<Long> before = partIds(sim);
+        importer.importStlPart(file, "OneSurfaceForAllPatches", metre, false, 1.0e-5);
+        List<GeometryPart> imported = new ArrayList<GeometryPart>();
+        for (GeometryPart part : sim.getGeometryPartManager().getLeafParts()) {
+            if (!before.contains(part.getObjectId())) {
+                imported.add(part);
+            }
+        }
+        if (imported.size() != 1) {
+            throw new IllegalStateException("Expected one imported STL part from " + file +
+                                            ", got " + imported.size());
+        }
+        GeometryPart part = imported.get(0);
+        part.setPresentationName(name);
+        return part;
+    }
+
     private static void addSurfaceSize(CustomMeshControlManager controls, String name,
                                        List<GeometryPart> parts, double size,
                                        star.common.Units metre) {
         SurfaceCustomMeshControl control = controls.createSurfaceControl();
         control.setPresentationName(name);
-        control.getGeometryObjects().addParts(parts);
+        control.getGeometryObjects().setObjects(parts, true);
+        control.getCustomConditions().get(PartsTargetSurfaceSizeOption.class)
+            .setSelected(PartsTargetSurfaceSizeOption.Type.CUSTOM);
+        control.getCustomConditions().get(PartsMinimumSurfaceSizeOption.class)
+            .setSelected(PartsMinimumSurfaceSizeOption.Type.CUSTOM);
         control.getCustomValues().get(PartsTargetSurfaceSize.class)
             .setAbsoluteSize(size, metre);
+        control.getCustomValues().get(PartsMinimumSurfaceSize.class)
+            .setAbsoluteSize(0.5 * size, metre);
+    }
+
+    private static List<PartSurface> surfacesOf(List<GeometryPart> parts) {
+        List<PartSurface> surfaces = new ArrayList<PartSurface>();
+        for (GeometryPart part : parts) {
+            surfaces.addAll(part.getPartSurfaces());
+        }
+        return surfaces;
     }
 
     private void addContactPrevention(SurfaceWrapperAutoMeshOperation op,
@@ -132,20 +178,20 @@ public class RunWrapper extends StarMacro {
         if (plinthParts.isEmpty()) {
             throw new IllegalStateException("No plinth parts found for contact prevention");
         }
+        List<PartSurface> plinthSurfaces = surfacesOf(plinthParts);
+        List<PartSurface> groundSurfaces = surfacesOf(groundParts);
+        if (plinthSurfaces.isEmpty() || groundSurfaces.isEmpty()) {
+            throw new IllegalStateException("Contact prevention surface set is empty");
+        }
         PartsTwoGroupContactPreventionSet contact =
             op.getContactPreventionSet().createPartsTwoGroupContactPreventionSet();
         contact.setPresentationName("Plinth-ground contact prevention");
         contact.setEnableContactPrevention(true);
         contact.getFloor().setValueAndUnits(pd("contact_floor_m"), metre);
-
-        List<GeometryPart> all = new ArrayList<GeometryPart>();
-        all.addAll(plinthParts);
-        all.addAll(groundParts);
-        contact.setParts(all);
-        contact.getPartSurfaceGroup1().addParts(plinthParts);
-        contact.getPartSurfaceGroup2().addParts(groundParts);
-        System.out.println("Contact prevention: plinth surfaces <-> " +
-                           groundParts.size() + " ground parts");
+        contact.getPartSurfaceGroup1().setObjects(plinthSurfaces, true);
+        contact.getPartSurfaceGroup2().setObjects(groundSurfaces, true);
+        System.out.println("Contact prevention: " + plinthSurfaces.size() +
+                           " plinth surfaces <-> " + groundSurfaces.size() + " ground surfaces");
     }
 
     @Override
@@ -166,8 +212,7 @@ public class RunWrapper extends StarMacro {
             }
             List<GeometryPart> wallParts = new ArrayList<GeometryPart>();
             for (int i = 0; i < wallFiles.length; i++) {
-                importer.importStlPart(wallFiles[i], wallNames[i], metre, false, 1.0e-5);
-                wallParts.add(sim.getGeometryPartManager().getPart(wallNames[i]));
+                wallParts.add(importStlNamed(importer, sim, wallFiles[i], wallNames[i], metre));
             }
 
             String[] groundNames = plist("ground_names");
@@ -178,13 +223,11 @@ public class RunWrapper extends StarMacro {
             }
             List<GeometryPart> groundParts = new ArrayList<GeometryPart>();
             for (int i = 0; i < groundFiles.length; i++) {
-                importer.importStlPart(groundFiles[i], groundNames[i], metre, false, 1.0e-5);
-                groundParts.add(sim.getGeometryPartManager().getPart(groundNames[i]));
+                groundParts.add(importStlNamed(importer, sim, groundFiles[i], groundNames[i], metre));
             }
 
-            importer.importStlPart(p("refine_box_stl"), "CarRefineBox", metre, false, 1.0e-5);
-            GeometryPart refineBox = sim.getGeometryPartManager().getPart("CarRefineBox");
             List<GeometryPart> cars = partsByPrefix(sim, "CAR__");
+            System.out.println("CHECKPOINT car parts=" + cars.size());
             if (cars.isEmpty()) {
                 throw new IllegalStateException("No CAR__ parts found in prepared simulation");
             }
@@ -195,25 +238,30 @@ public class RunWrapper extends StarMacro {
             Collection<GeometryPart> wrapperInputs = new ArrayList<GeometryPart>(cars);
             wrapperInputs.addAll(domainParts);
 
+            System.out.println("CHECKPOINT before wrapper operation creation");
             MeshOperationManager manager = sim.get(MeshOperationManager.class);
             SurfaceWrapperAutoMeshOperation op = (SurfaceWrapperAutoMeshOperation)
                 manager.createSurfaceWrapperAutoMeshOperation(wrapperInputs, p("wrap_name"));
             op.setMeshPartByPart(false);
+            op.setMeshInParallel(pb("mesh_in_parallel"));
             op.setDoPartialWrapping(false);
             op.setRunGlobalIfLocalFails(pb("run_global_if_local_fails"));
             op.setCreateContacts(false);
+            System.out.println("CHECKPOINT wrapper operation created");
 
             op.getDefaultValues().get(BaseSize.class).setValue(pd("base_size_m"));
             op.getDefaultValues().get(PartsMinimumSurfaceSize.class)
                 .setAbsoluteSize(pd("minimum_surface_size_m"), metre);
 
             GlobalVolumeOfInterest voi = op.getDefaultValues().get(GlobalVolumeOfInterest.class);
-            voi.getVolumeOfInterestOption().setSelected(GlobalVolumeOfInterestOption.Type.NTH_LARGEST);
-            voi.getVolumeOfInterestVolumeNumber().setVolumeNumber(Integer.parseInt(p("nth_largest")));
-            SmallestRelevantVolume smallest = op.getDefaultValues().get(SmallestRelevantVolume.class);
+            voi.getVolumeOfInterestOption().setSelected(
+                GlobalVolumeOfInterestOption.Type.LARGEST_INTERNAL);
+            SmallestRelevantVolume smallest = voi.getSmallestRelevantVolume();
             smallest.setValue(pd("smallest_relevant_volume_m3"));
+            System.out.println("CHECKPOINT global wrapper controls set");
 
             CustomMeshControlManager controls = op.getCustomMeshControls();
+            System.out.println("CHECKPOINT adding surface controls");
             addSurfaceSize(controls, "Car and plinth 2 mm", cars,
                            pd("car_target_size_m"), metre);
             addSurfaceSize(controls, "Wind-tunnel walls 1 m", wallParts,
@@ -224,12 +272,6 @@ public class RunWrapper extends StarMacro {
                                Double.parseDouble(groundSizes[i]), metre);
             }
 
-            VolumeCustomMeshControl refineControl = controls.createVolumeControl();
-            refineControl.setPresentationName("Car refinement volume");
-            refineControl.getGeometryObjects().addParts(Collections.singletonList(refineBox));
-            refineControl.getCustomValues().get(VolumeControlSize.class)
-                .setAbsoluteSize(pd("refine_volume_size_m"), metre);
-
             String plinthPattern = p("contact_prevention_plinth_pattern", "*Plinth*");
             List<GeometryPart> plinthParts = new ArrayList<GeometryPart>();
             for (GeometryPart part : cars) {
@@ -238,7 +280,11 @@ public class RunWrapper extends StarMacro {
                     plinthParts.add(part);
                 }
             }
-            addContactPrevention(op, plinthParts, groundParts, metre);
+            System.out.println("CHECKPOINT before contact prevention, plinthParts=" + plinthParts.size());
+            List<GeometryPart> contactGroundParts =
+                Collections.singletonList(groundParts.get(0));
+            addContactPrevention(op, plinthParts, contactGroundParts, metre);
+            System.out.println("CHECKPOINT contact prevention added");
 
             SurfaceWrapperAutoMesher mesher = op.getSurfaceWrapperAutoMesher();
             mesher.setDoCurvatureRefinement(pb("curvature_refinement"));
@@ -246,6 +292,7 @@ public class RunWrapper extends StarMacro {
             mesher.setDoGapClosure(pb("gap_closure"));
             mesher.setRunGlobalIfLocalFails(pb("run_global_if_local_fails"));
 
+            System.out.println("CHECKPOINT all wrapper controls set");
             System.out.println("Executing surface wrapper: " + p("wrap_name"));
             op.execute();
 
@@ -258,7 +305,14 @@ public class RunWrapper extends StarMacro {
             System.out.println("Wrapper STL: " + p("wrap_stl"));
             System.out.println("Wrapper simulation: " + p("wrap_sim"));
         } catch (Exception ex) {
-            ex.printStackTrace();
+            System.out.println("WRAPPER FAILURE: " + ex.getClass().getName() + ": " + ex.getMessage());
+            ex.printStackTrace(System.out);
+            Throwable cause = ex.getCause();
+            while (cause != null) {
+                System.out.println("WRAPPER CAUSE: " + cause.getClass().getName() + ": " + cause.getMessage());
+                cause.printStackTrace(System.out);
+                cause = cause.getCause();
+            }
             throw new RuntimeException("RunWrapper failed", ex);
         }
     }

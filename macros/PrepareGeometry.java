@@ -6,6 +6,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.List;
@@ -14,23 +15,35 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import star.base.neo.DoubleVector;
+import star.common.CartesianCoordinateSystem;
+import star.common.CoordinateSystem;
 import star.common.GeometryPart;
-import star.common.ImportManager;
+import star.common.GeometryPartManager;
 import star.common.Simulation;
-import star.meshing.MeshOperationManager;
+import star.common.StarMacro;
+import star.common.Units;
 import star.meshing.MeshPart;
 import star.meshing.PartImportManager;
-import star.meshing.RotationControl;
-import star.meshing.TransformPartsOperation;
-import star.meshing.TranslationControl;
-import star.common.StarMacro;
 
 /**
- * Stage 1: import STEP geometry, apply the DP18 machine transform, export each
- * transformed CAD body as a binary STL for reference labelling and bbox logic.
+ * Import STEP files, assign stable file-based part names, flatten the assembly
+ * leaves to the root part manager, then apply the global machine motion:
+ *   1. all parts: Rz(180) + Tx(xpitch)
+ *   2. lifted parts only: pitch + dz
+ *   3. all parts: yaw
+ *
+ * GeometryPartManager transform angles are in radians.
  */
 public class PrepareGeometry extends StarMacro {
     private Properties props;
+
+    private static class ImportedRecord {
+        String sourceFile;
+        List<GeometryPart> parts = new ArrayList<GeometryPart>();
+        List<String> originalNames = new ArrayList<String>();
+        List<String> parentNames = new ArrayList<String>();
+        List<String> uniqueNames = new ArrayList<String>();
+    }
 
     private String p(String key) {
         String value = props.getProperty(key);
@@ -147,106 +160,92 @@ public class PrepareGeometry extends StarMacro {
         }
     }
 
-    private static void addRotation(TransformPartsOperation op, double ox, double oy, double oz,
-                                    double ax, double ay, double az, double degrees,
-                                    star.common.Units angleUnits, int index) {
-        RotationControl control = op.getTransforms().createRotationControl();
-        control.setIndex(index);
-        control.getOriginInput().setVector(new DoubleVector(new double[] {ox, oy, oz}));
-        control.getAxisVectorInput().setVector(new DoubleVector(new double[] {ax, ay, az}));
-        control.getAngle().setValueAndUnits(degrees, angleUnits);
+    private static List<Double> vector(double x, double y, double z) {
+        return Arrays.asList(x, y, z);
     }
 
-    private static void addTranslation(TransformPartsOperation op, double dx, double dy, double dz, int index) {
-        TranslationControl control = op.getTransforms().createTranslationControl();
-        control.setIndex(index);
-        control.getTranslationVectorInput().setVector(new DoubleVector(new double[] {dx, dy, dz}));
+    private static List<Units> vectorUnits(Units unit) {
+        return Arrays.asList(unit, unit, unit);
     }
 
-    private void applyMachine(Simulation sim, List<GeometryPart> parts, String sourceFile,
-                              List<String> partNames) {
-        if (!pb("machine_enabled") || parts.isEmpty()) {
-            return;
-        }
-
-        boolean fixed = false;
-        String[] fixedPatterns = plist("fixed_patterns");
-        for (String name : partNames) {
-            if (matchesAny(name, fixedPatterns)) {
-                fixed = true;
-                break;
-            }
-        }
-        if (!fixed && matchesAny(stem(sourceFile), fixedPatterns)) {
-            fixed = true;
-        }
-
-        MeshOperationManager manager = sim.get(MeshOperationManager.class);
-        TransformPartsOperation op =
-            (TransformPartsOperation) manager.createTransformPartsOperation(parts);
-        op.setCreateNewOutputParts(false);
-
-        star.common.Units deg = sim.getUnitsManager().getUnits("deg");
-        int index = 0;
-        addRotation(op, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 180.0, deg, index++);
-        addTranslation(op, pd("machine_xpitch"), 0.0, 0.0, index++);
-
-        if (!fixed) {
-            double pitch = pd("machine_pitch_deg");
-            if (Math.abs(pitch) > 1.0e-12) {
-                addRotation(op, pd("machine_xpitch"), 0.0, pd("machine_zbase"),
-                            0.0, 1.0, 0.0, pd("machine_pitch_sign") * pitch, deg, index++);
-            }
-            double dz = pd("machine_zpitch");
-            if (Math.abs(dz) > 1.0e-12) {
-                addTranslation(op, 0.0, 0.0, dz, index++);
-            }
-        }
-
-        double yaw = pd("machine_yaw_deg");
-        if (Math.abs(yaw) > 1.0e-12) {
-            addRotation(op, pd("machine_yaw_pivot_x"), pd("machine_yaw_pivot_y"), 0.0,
-                        0.0, 0.0, 1.0, pd("machine_yaw_sign") * yaw, deg, index++);
-        }
-        op.execute();
+    private static CartesianCoordinateSystem createPivotSystem(
+            Simulation sim, String name, double x, double y, double z, Units metre) {
+        CartesianCoordinateSystem csys = sim.getCoordinateSystemManager()
+            .createCoordinateSystem(CartesianCoordinateSystem.class, name, false);
+        csys.setOrigin(new DoubleVector(new double[] {x, y, z}),
+                       new Units[] {metre, metre, metre});
+        csys.setBasis0(new DoubleVector(new double[] {1.0, 0.0, 0.0}));
+        csys.setBasis1(new DoubleVector(new double[] {0.0, 1.0, 0.0}));
+        return csys;
     }
 
-    private void importAndExport(Simulation sim, PartImportManager importer,
-                                 String sourceFile, String prefix, String exportDir,
-                                 BufferedWriter index, int tessDensity, double sharpAngle) throws IOException {
+    private ImportedRecord importParts(Simulation sim, PartImportManager importer, String sourceFile,
+                                       String prefix, int tessDensity, double sharpAngle) {
         Set<Long> before = ids(sim.getGeometryPartManager().getLeafParts());
         importer.importCadPart(sourceFile, "SharpEdges", sharpAngle, tessDensity);
         List<GeometryPart> imported = newParts(sim, before);
         if (imported.isEmpty()) {
             throw new IllegalStateException("No geometry parts imported from: " + sourceFile);
         }
-
-        List<String> originalNames = new ArrayList<String>();
-        for (GeometryPart part : imported) {
-            originalNames.add(part.getPresentationName() + " " + parentName(part));
-        }
-        applyMachine(sim, imported, sourceFile, originalNames);
-
-        int seq = 0;
-        for (GeometryPart part : imported) {
-            String original = part.getPresentationName();
-            String parent = parentName(part);
-            String unique = prefix + "__" + sanitize(stem(sourceFile)) + "__" +
-                String.format("%03d", seq) + "__" + sanitize(original);
+        ImportedRecord record = new ImportedRecord();
+        record.sourceFile = sourceFile;
+        for (int i = 0; i < imported.size(); i++) {
+            GeometryPart part = imported.get(i);
+            record.parts.add(part);
+            record.originalNames.add(part.getPresentationName());
+            record.parentNames.add(parentName(part));
+            String unique = prefix + "__" + String.format("%03d", i);
             part.setPresentationName(unique);
+            record.uniqueNames.add(unique);
+        }
+        System.out.println("Imported " + imported.size() + " parts from " + sourceFile);
+        return record;
+    }
+
+    private static GeometryPart findCurrentPart(Simulation sim, String name) {
+        for (GeometryPart part : sim.getGeometryPartManager().getLeafParts()) {
+            if (name.equals(part.getPresentationName())) {
+                return part;
+            }
+        }
+        throw new IllegalStateException("Current geometry part not found: " + name);
+    }
+
+    private static List<GeometryPart> partsByUniqueNames(Simulation sim, List<String> names) {
+        List<GeometryPart> out = new ArrayList<GeometryPart>();
+        for (String name : names) {
+            out.add(findCurrentPart(sim, name));
+        }
+        return out;
+    }
+
+    private boolean recordIsFixed(ImportedRecord record) {
+        String[] fixedPatterns = plist("fixed_patterns");
+        for (int i = 0; i < record.parts.size(); i++) {
+            String text = record.originalNames.get(i) + " " + record.parentNames.get(i);
+            if (matchesAny(text, fixedPatterns)) {
+                return true;
+            }
+        }
+        return matchesAny(stem(record.sourceFile), fixedPatterns);
+    }
+
+    private static void writeRecord(Simulation sim, ImportedRecord record, String exportDir,
+                                    BufferedWriter index) throws IOException {
+        for (int i = 0; i < record.parts.size(); i++) {
+            String unique = record.uniqueNames.get(i);
+            GeometryPart part = findCurrentPart(sim, unique);
             Path stl = Paths.get(exportDir).resolve(unique + ".stl");
             ((MeshPart) part).exportStlPart(stl.toString(), true);
-            index.write(sourceFile);
+            index.write(record.sourceFile);
             index.write('\t');
-            index.write(original);
+            index.write(record.originalNames.get(i));
             index.write('\t');
-            index.write(parent);
+            index.write(record.parentNames.get(i));
             index.write('\t');
             index.write(stl.toString());
             index.newLine();
-            seq++;
         }
-        System.out.println("Imported " + imported.size() + " parts from " + sourceFile);
     }
 
     @Override
@@ -257,41 +256,113 @@ public class PrepareGeometry extends StarMacro {
             sim.loadMeshing();
             sim.loadCaeImport();
             PartImportManager importer = sim.get(PartImportManager.class);
-
-            Path partsDir = Paths.get(p("parts_dir"));
-            Path markersDir = Paths.get(p("markers_dir"));
-            Files.createDirectories(partsDir);
-            Files.createDirectories(markersDir);
+            GeometryPartManager partManager = sim.getGeometryPartManager();
 
             int tessDensity = pi("tessellation_density");
             double sharpAngle = pd("sharp_edge_angle_deg");
 
-            try (BufferedWriter index = Files.newBufferedWriter(
-                    Paths.get(p("parts_index")), StandardCharsets.UTF_8)) {
-                for (String file : plist("car_files")) {
-                    importAndExport(sim, importer, file, "CAR", partsDir.toString(),
-                                    index, tessDensity, sharpAngle);
-                }
+            List<ImportedRecord> carRecords = new ArrayList<ImportedRecord>();
+            List<ImportedRecord> markerRecords = new ArrayList<ImportedRecord>();
+            for (String file : plist("car_files")) {
+                String prefix = "CAR__" + sanitize(stem(file));
+                carRecords.add(importParts(sim, importer, file, prefix, tessDensity, sharpAngle));
             }
-
             String[] markerNames = plist("marker_names");
             String[] markerFiles = plist("marker_files");
             if (markerNames.length != markerFiles.length) {
                 throw new IllegalStateException("marker_names and marker_files length mismatch");
             }
+            for (int i = 0; i < markerFiles.length; i++) {
+                String prefix = "MARKER__" + sanitize(markerNames[i]) + "__" +
+                    sanitize(stem(markerFiles[i]));
+                markerRecords.add(importParts(sim, importer, markerFiles[i], prefix,
+                                              tessDensity, sharpAngle));
+            }
+
+            List<ImportedRecord> allRecords = new ArrayList<ImportedRecord>();
+            allRecords.addAll(carRecords);
+            allRecords.addAll(markerRecords);
+            List<String> allNames = new ArrayList<String>();
+            List<String> liftedNames = new ArrayList<String>();
+            for (ImportedRecord record : allRecords) {
+                allNames.addAll(record.uniqueNames);
+                if (!recordIsFixed(record)) {
+                    liftedNames.addAll(record.uniqueNames);
+                }
+            }
+
+            // Flatten imported assembly leaves onto the root part manager so all
+            // subsequent coordinate transforms use the laboratory frame.
+            partManager.reparentParts(partsByUniqueNames(sim, allNames), partManager);
+            partsByUniqueNames(sim, allNames);
+
+            if (pb("machine_enabled") && !allNames.isEmpty()) {
+                Units metre = sim.getUnitsManager().getUnits("m");
+                CoordinateSystem labCsys =
+                    sim.getCoordinateSystemManager().getLabCoordinateSystem();
+
+                partManager.rotateParts(partsByUniqueNames(sim, allNames),
+                                        vector(0.0, 0.0, 1.0), vectorUnits(metre),
+                                        Math.PI, labCsys);
+                partManager.translateParts(partsByUniqueNames(sim, allNames),
+                                           vector(pd("machine_xpitch"), 0.0, 0.0),
+                                           vectorUnits(metre), labCsys);
+
+                double pitch = pd("machine_pitch_deg");
+                double dz = pd("machine_zpitch");
+                boolean applyPitch = pb("machine_apply_pitch") && Math.abs(pitch) > 1.0e-12;
+                boolean applyDz = pb("machine_apply_dz") && Math.abs(dz) > 1.0e-12;
+                if ((applyPitch || applyDz) && !liftedNames.isEmpty()) {
+                    if (applyPitch) {
+                        CartesianCoordinateSystem pitchCsys = createPivotSystem(
+                            sim, "Pitch Pivot", pd("machine_xpitch"), 0.0,
+                            pd("machine_zbase"), metre);
+                        partManager.rotateParts(partsByUniqueNames(sim, liftedNames),
+                                                vector(0.0, 1.0, 0.0), vectorUnits(metre),
+                                                Math.toRadians(pd("machine_pitch_sign") * pitch),
+                                                pitchCsys);
+                    }
+                    if (applyDz) {
+                        partManager.translateParts(partsByUniqueNames(sim, liftedNames),
+                                                   vector(0.0, 0.0, dz),
+                                                   vectorUnits(metre), labCsys);
+                    }
+                }
+
+                double yaw = pd("machine_yaw_deg");
+                if (Math.abs(yaw) > 1.0e-12) {
+                    CartesianCoordinateSystem yawCsys = createPivotSystem(
+                        sim, "Yaw Pivot", pd("machine_yaw_pivot_x"),
+                        pd("machine_yaw_pivot_y"), 0.0, metre);
+                    partManager.rotateParts(partsByUniqueNames(sim, allNames),
+                                            vector(0.0, 0.0, 1.0), vectorUnits(metre),
+                                            Math.toRadians(pd("machine_yaw_sign") * yaw),
+                                            yawCsys);
+                }
+
+                partsByUniqueNames(sim, allNames);
+                System.out.println("Applied machine transform to all " + allNames.size() +
+                                   " parts after flattening");
+            }
+
+            try (BufferedWriter index = Files.newBufferedWriter(
+                    Paths.get(p("parts_index")), StandardCharsets.UTF_8)) {
+                for (ImportedRecord record : carRecords) {
+                    writeRecord(sim, record, p("parts_dir"), index);
+                }
+            }
             try (BufferedWriter index = Files.newBufferedWriter(
                     Paths.get(p("markers_index")), StandardCharsets.UTF_8)) {
-                for (int i = 0; i < markerFiles.length; i++) {
-                    String prefix = "MARKER__" + sanitize(markerNames[i]);
-                    importAndExport(sim, importer, markerFiles[i], prefix, markersDir.toString(),
-                                    index, tessDensity, sharpAngle);
+                for (ImportedRecord record : markerRecords) {
+                    writeRecord(sim, record, p("markers_dir"), index);
                 }
             }
 
             sim.saveState(p("prepared_sim"));
             System.out.println("Prepared simulation saved: " + p("prepared_sim"));
         } catch (Exception ex) {
-            ex.printStackTrace();
+            System.out.println("PREPARE FAILURE: " + ex.getClass().getName() + ": " + ex.getMessage());
+            ex.printStackTrace(System.out);
             throw new RuntimeException("PrepareGeometry failed", ex);
         }
     }
